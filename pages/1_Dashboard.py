@@ -18,8 +18,12 @@ if not key:
 params = {"key": key}
 
 try:
-    summary = requests.get(f"{TRACKER_URL}/summary", params=params, timeout=15).json()
-    status_rows = requests.get(f"{TRACKER_URL}/status", params=params, timeout=15).json()
+    with st.spinner("Waking up the tracker (can take 20-30s if it's been idle)..."):
+        summary = requests.get(f"{TRACKER_URL}/summary", params=params, timeout=40).json()
+        status_rows = requests.get(f"{TRACKER_URL}/status", params=params, timeout=40).json()
+except requests.exceptions.Timeout:
+    st.error("Tracker didn't respond in time. It may still be waking up, try again in a few seconds.")
+    st.stop()
 except Exception as e:
     st.error(f"Couldn't reach the tracker: {e}")
     st.stop()
