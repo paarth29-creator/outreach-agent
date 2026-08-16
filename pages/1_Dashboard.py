@@ -21,6 +21,7 @@ try:
     with st.spinner("Waking up the tracker (can take 20-30s if it's been idle)..."):
         summary = requests.get(f"{TRACKER_URL}/summary", params=params, timeout=40).json()
         status_rows = requests.get(f"{TRACKER_URL}/status", params=params, timeout=40).json()
+        click_log = requests.get(f"{TRACKER_URL}/clicks", params=params, timeout=40).json()
 except requests.exceptions.Timeout:
     st.error("Tracker didn't respond in time. It may still be waking up, try again in a few seconds.")
     st.stop()
@@ -50,6 +51,26 @@ if link_data:
     st.dataframe(pd.DataFrame(link_data), use_container_width=True, hide_index=True)
 else:
     st.caption("No link clicks recorded yet.")
+
+st.markdown("---")
+st.subheader("Who clicked what")
+if click_log:
+    clicks_df = pd.DataFrame(click_log)
+    st.dataframe(
+        clicks_df[["recipient", "link_id", "url", "clicked_at"]],
+        use_container_width=True, hide_index=True
+    )
+
+    st.caption("Times each person clicked each link")
+    freq = (
+        clicks_df.groupby(["recipient", "link_id", "url"])
+        .size()
+        .reset_index(name="times_clicked")
+        .sort_values("times_clicked", ascending=False)
+    )
+    st.dataframe(freq, use_container_width=True, hide_index=True)
+else:
+    st.caption("No clicks recorded yet.")
 
 st.markdown("---")
 st.subheader("Per-email status")
