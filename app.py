@@ -237,7 +237,11 @@ def process_and_send(row, is_test=False):
             
             # Register the CLEAN msg_id with the tracker
             try:
-                r = requests.post(f"{TRACKER_URL}/register", json={'uid': uid, 'msg_id': clean_msg_id}, timeout=20)
+                r = requests.post(
+                    f"{TRACKER_URL}/register",
+                    json={'uid': uid, 'msg_id': clean_msg_id, 'recipient': row[email_col]},
+                    timeout=20,
+                )
                 r.raise_for_status()
             except Exception as reg_err:
                 st.session_state.setdefault('registration_errors', []).append(
@@ -249,7 +253,11 @@ def process_and_send(row, is_test=False):
                 f"{row[email_col]}: sent-copy replacement failed ({e}), self-open protection skipped for this one"
             )
             try:
-                r = requests.post(f"{TRACKER_URL}/register", json={'uid': uid, 'msg_id': orig_id}, timeout=20)
+                r = requests.post(
+                    f"{TRACKER_URL}/register",
+                    json={'uid': uid, 'msg_id': orig_id, 'recipient': row[email_col]},
+                    timeout=20,
+                )
                 r.raise_for_status()
             except Exception as reg_err:
                 st.session_state['registration_errors'].append(
