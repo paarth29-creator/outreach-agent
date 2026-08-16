@@ -6,6 +6,7 @@ import re
 import time
 import requests
 import uuid
+from urllib.parse import quote
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -152,6 +153,25 @@ with col3:
     schedule_time = st.time_input("Schedule Time")
     schedule_btn = st.button("📅 Queue for Later", use_container_width=True)
 
+LINK_PATTERN = re.compile(r'href="([^"]+)"')
+
+def rewrite_links_for_tracking(html: str, uid: str) -> str:
+    """Replace every href with a tracker redirect so clicks get logged before
+    forwarding on to the real destination. Skips mailto: and anchor links,
+    those aren't external destinations worth tracking."""
+    counter = {'n': 0}
+
+    def replace(match):
+        original_url = match.group(1)
+        if original_url.startswith('mailto:') or original_url.startswith('#'):
+            return match.group(0)
+        counter['n'] += 1
+        link_id = f"link{counter['n']}"
+        tracked_url = f"{TRACKER_URL}/click?uid={uid}&link_id={link_id}&url={quote(original_url, safe='')}"
+        return f'href="{tracked_url}"'
+
+    return LINK_PATTERN.sub(replace, html)
+
 def prepare_html_body(quill_html: str) -> str:
     def zero_margin(match):
         attrs = match.group(1)
@@ -178,6 +198,7 @@ def build_email(row, include_pixel=True):
     uid = str(uuid.uuid4())
     pixel_html = ""
     if include_pixel:
+        temp_body = rewrite_links_for_tracking(temp_body, uid)
         pixel_url = f"{TRACKER_URL}/track?uid={uid}"
         pixel_html = f'<img src="{pixel_url}" width="1" height="1" alt="" style="display:none;">'
         
@@ -272,29 +293,54 @@ if send_test or send_all or schedule_btn:
     elif uploaded_csv is None or not template or not subject:
         st.error("Please upload a CSV, and fill out both Subject and Template.")
     else:
-        try:
-            if send_test:
+        if send_test:
+            try:
                 with st.spinner("Sending untracked test email..."):
                     row = df.iloc[0]
                     recipient = process_and_send(row, is_test=True)
                     st.success(f"Test email sent to {recipient}! Safe to open.")
-            elif send_all:
-                st.session_state['registration_errors'] = []
-                st.info(f"Sending {len(df)} tracked emails. Please keep this window open.")
-                progress_bar = st.progress(0)
-                success_count = 0
-                for index, row in df.iterrows():
+            except Exception as e:
+                st.error(f"An error occurred: {e}")
+
+        elif send_all:
+            st.session_state['registration_errors'] = []
+            send_errors = []
+            st.info(f"Sending {len(df)} tracked emails. Please keep this window open.")
+            progress_bar = st.progress(0)
+            success_count = 0
+            fail_count = 0
+
+            for index, row in df.iterrows():
+                # Each row gets its own try/except now, one bad address or a
+                # transient API error no longer aborts every row after it.
+                try:
                     recipient = process_and_send(row, is_test=False)
                     success_count += 1
-                    progress_bar.progress(success_count / len(df))
-                    time.sleep(2) 
-                st.success(f"🎉 Successfully sent {success_count} tracked emails!")
-                if st.session_state.get('registration_errors'):
-                    st.warning(
-                        "Sent, but tracking registration failed for:\n\n"
-                        + "\n".join(st.session_state['registration_errors'])
-                    )
-            elif schedule_btn:
-                st.info(f"Campaign queued for {schedule_date} at {schedule_time}.")
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
+                    try:
+                        requests.post(f"{TRACKER_URL}/log_attempt",
+                                      json={'recipient': recipient, 'status': 'sent'}, timeout=10)
+                    except Exception:
+                        pass
+                except Exception as e:
+                    fail_count += 1
+                    send_errors.append(f"{row[email_col]}: {e}")
+                    try:
+                        requests.post(f"{TRACKER_URL}/log_attempt",
+                                      json={'recipient': row[email_col], 'status': 'failed', 'error': str(e)},
+                                      timeout=10)
+                    except Exception:
+                        pass
+                progress_bar.progress((success_count + fail_count) / len(df))
+                time.sleep(2)
+
+            st.success(f"🎉 Sent {success_count} of {len(df)} tracked emails.")
+            if fail_count:
+                st.error(f"{fail_count} failed to send:\n\n" + "\n".join(send_errors))
+            if st.session_state.get('registration_errors'):
+                st.warning(
+                    "Sent, but tracking registration failed for:\n\n"
+                    + "\n".join(st.session_state['registration_errors'])
+                )
+
+        elif schedule_btn:
+            st.info(f"Campaign queued for {schedule_date} at {schedule_time}.")
