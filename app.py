@@ -6,6 +6,7 @@ import re
 import time
 import requests
 import uuid
+from datetime import datetime, timezone
 from urllib.parse import quote
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -343,4 +344,45 @@ if send_test or send_all or schedule_btn:
                 )
 
         elif schedule_btn:
-            st.info(f"Campaign queued for {schedule_date} at {schedule_time}.")
+            key = st.secrets.get("STATUS_KEY") if hasattr(st, "secrets") else None
+            if not key:
+                st.error("STATUS_KEY isn't set in this app's secrets, scheduling needs it to authenticate with the tracker.")
+            else:
+                schedule_dt = datetime.combine(schedule_date, schedule_time).replace(tzinfo=timezone.utc)
+                rows = df.to_dict(orient="records")
+
+                attachments_payload = []
+                if uploaded_files:
+                    for f in uploaded_files:
+                        f.seek(0)
+                        attachments_payload.append({
+                            "filename": f.name,
+                            "content_b64": base64.b64encode(f.read()).decode(),
+                        })
+
+                try:
+                    r = requests.post(
+                        f"{TRACKER_URL}/campaigns",
+                        params={"key": key},
+                        json={
+                            "subject_template": subject,
+                            "body_template": template,
+                            "email_column": email_col,
+                            "cc_emails": cc_emails,
+                            "custom_vars": st.session_state.custom_vars,
+                            "mappings": mappings,
+                            "first_name_flags": first_name_flags,
+                            "schedule_time": schedule_dt.isoformat(),
+                            "rows": rows,
+                            "attachments": attachments_payload,
+                        },
+                        timeout=40,
+                    )
+                    r.raise_for_status()
+                    resp = r.json()
+                    st.success(
+                        f"Queued {resp.get('recipient_count')} emails for "
+                        f"{schedule_date} at {schedule_time} (campaign #{resp.get('campaign_id')})."
+                    )
+                except Exception as e:
+                    st.error(f"Couldn't queue the campaign: {e}")
