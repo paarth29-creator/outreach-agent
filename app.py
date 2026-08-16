@@ -47,14 +47,16 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.
 
 def authenticate_gmail():
     creds = None
+    secrets_error = None
     try:
         if 'gmail_token' in st.secrets:
             token_dict = dict(st.secrets["gmail_token"])
             creds = Credentials.from_authorized_user_info(token_dict, SCOPES)
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
-    except:
-        pass
+    except Exception as e:
+        secrets_error = e
+        creds = None
             
     if not creds or not creds.valid:
         if os.path.exists('token.json'):
@@ -62,7 +64,10 @@ def authenticate_gmail():
         
     if not creds or not creds.valid:
         if not os.path.exists('credentials.json'):
-            st.error("Please add your credentials.json locally to generate a token.")
+            if secrets_error:
+                st.error(f"gmail_token secret found but failed to load: {secrets_error}")
+            else:
+                st.error("No Gmail credentials found. Add gmail_token to Streamlit secrets (cloud), or credentials.json locally.")
             return None
         flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
         creds = flow.run_local_server(port=0)
@@ -75,15 +80,13 @@ if 'custom_vars' not in st.session_state:
 
 with st.sidebar:
     st.header("⚙️ Settings")
-    if 'service' not in st.session_state:
+    if not st.session_state.get('service'):
         if st.button("🔗 Connect Gmail Account", use_container_width=True):
             with st.spinner("Authenticating..."):
-                try:
-                    st.session_state.service = authenticate_gmail()
-                    if st.session_state.service:
-                        st.success("✅ Gmail Connected!")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                service = authenticate_gmail()
+                if service:
+                    st.session_state.service = service
+                    st.success("✅ Gmail Connected!")
     else:
         st.success("✅ Gmail Connected!")
     st.markdown("---")
@@ -256,7 +259,7 @@ def process_and_send(row, is_test=False):
     return row[email_col]
 
 if send_test or send_all or schedule_btn:
-    if 'service' not in st.session_state:
+    if not st.session_state.get('service'):
         st.error("Please connect your Gmail account in the sidebar first.")
     elif uploaded_csv is None or not template or not subject:
         st.error("Please upload a CSV, and fill out both Subject and Template.")
